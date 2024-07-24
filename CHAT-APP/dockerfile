@@ -8,7 +8,7 @@ FROM openjdk:11
 VOLUME /tmp
 
 #expose this application
-EXPOSE 8080
+EXPOSE 8090
 
 #we will provide the jar file as argument
 ARG JAR_FILE=target/websocket-demo-0.0.1-SNAPSHOT.jar
