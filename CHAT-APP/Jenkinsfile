@@ -1,0 +1,127 @@
+pipeline {
+
+    agent any
+
+    environment {
+
+        APP = sh(script: "basename -s .git `git config --get remote.origin.url`", returnStdout: true).trim()
+        AUTHOR = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
+        COMMIT_ID = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+        AWS_ACCOUNT_ID = getAccountId(env.BRANCH_NAME)
+        AWS_ACCESS_KEY_ID = credentials('AWS-Creds')
+        AWS_SECRET_ACCESS_KEY = credentials('AWS-Creds')
+        AWS_DEFAULT_REGION = 'ap-south-1'
+        SONAR_LOGIN = credentials('tokensonar')
+        SONAR_URL = credentials('SONAR_URL')
+        ARGOCD_CREDS = credentials('ArgoCD-creds')
+        ARGOCD_URL = credentials('ArgoCD_URL')
+    }
+
+    stages {
+
+        stage('Code Build') {
+            steps {
+                sh "mvn clean install"
+                sh "mvn test jacoco:report sonar:sonar"
+            }
+        }
+
+        stage('Build Image') {
+
+            when {
+                expression {
+                    return shouldStageBeExecuted(env.BRANCH_NAME)
+                }
+            }
+
+            steps {
+                sh "docker build -t ${APP} ."
+            }
+        }
+
+        stage('Push to ECR') {
+
+            when {
+                expression {
+                    return shouldStageBeExecuted(env.BRANCH_NAME)
+                }
+            }
+
+            steps {
+                sh "aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+                sh "docker tag ${APP}:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${APP}:${COMMIT_ID}"
+                sh "docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${APP}:${COMMIT_ID}"
+            }
+        }
+
+        stage('Clone Git Ops Repo') {
+
+            when {
+                expression {
+                    return shouldStageBeExecuted(env.BRANCH_NAME)
+                }
+            }
+
+            steps {
+                checkout([$class: 'GitSCM', branches: [[name: 'origin/development']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: 'git-creds', url: 'https://github.com/blue-pencil-strategies/c4c-git-ops-repo.git']]])
+            }
+        }
+
+        stage('Update Deployment File') {
+
+            when {
+                expression {
+                    return shouldStageBeExecuted(env.BRANCH_NAME)
+                }
+            }
+
+            steps {
+                script {
+                    catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                        sh "sed -i 's+${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${APP}.*+${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${APP}:${COMMIT_ID}+g' dev/${APP}.yaml"
+                        sh "git add dev/${APP}.yaml"
+                        sh "git commit -m 'Author: ${AUTHOR} | Update image for ${APP} to ${COMMIT_ID}'"
+                        sh "git push origin HEAD:development"
+                    }
+                }
+            }
+        }
+
+        stage("Check Service Deployment") {
+
+            when {
+                expression {
+                    return shouldStageBeExecuted(env.BRANCH_NAME)
+                }
+            }
+
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'ArgoCD-creds', passwordVariable: 'ARGOCD_PASSWORD', usernameVariable: 'ARGOCD_USERNAME')]) {
+                        sh "argocd login ${ARGOCD_URL} --username ${ARGOCD_USERNAME} --password '${ARGOCD_PASSWORD}' --grpc-web"
+                        sh "argocd app sync dev-apps | grep '${APP}' | awk '\$3 == \"Deployment\" {print \$0}'"
+                        sh "argocd logout  ${ARGOCD_URL} "
+                    }
+                }
+            }
+        }
+    }
+}
+
+def getAccountId(branchName) {
+
+    if("prod".equals(branchName)) {
+        return "prodAccountId";
+    }
+
+    return "378339051275";
+}
+
+def shouldStageBeExecuted(branchName) {
+
+    if("develop".equals(branchName) || "prod".equals(branchName)) {
+        return true;
+    }
+
+    return false;
+}
