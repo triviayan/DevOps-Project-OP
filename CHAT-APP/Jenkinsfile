@@ -3,7 +3,7 @@ pipeline {
     stages {
         stage('git clone') {
             steps {
-                git clone url: 'https://github.com/triviayan/DevOps-Project-OP.git', branch: 'main'
+                git url: 'https://github.com/triviayan/DevOps-Project-OP.git', branch: 'main'
             }
         }
         stage('Code Build') {
