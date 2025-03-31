@@ -8,9 +8,10 @@ pipeline {
         }
         stage('Code Build') {
             steps {
+                dir('CHAT-APP') {
                 sh 'mvn clean install'
-                sh 'mvn test jacoco:report sonar:sonar'
             }
+        }
         }
 
         stage('Build Image') {
