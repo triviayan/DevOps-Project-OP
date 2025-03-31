@@ -1,21 +1,11 @@
 pipeline {
     agent any
-
-    environment {
-        APP = sh(script: 'basename -s .git `git config --get remote.origin.url`', returnStdout: true).trim()
-        AUTHOR = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
-        COMMIT_ID = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-        AWS_ACCOUNT_ID = getAccountId(env.BRANCH_NAME)
-        AWS_ACCESS_KEY_ID = credentials('AWS-Creds')
-        AWS_SECRET_ACCESS_KEY = credentials('AWS-Creds')
-        AWS_DEFAULT_REGION = 'ap-south-1'
-        SONAR_LOGIN = credentials('tokensonar')
-        SONAR_URL = credentials('SONAR_URL')
-        ARGOCD_CREDS = credentials('ArgoCD-creds')
-        ARGOCD_URL = credentials('ArgoCD_URL')
-    }
-
     stages {
+        stage('git clone') {
+            steps {
+                git clone url: 'https://github.com/triviayan/DevOps-Project-OP.git', branch: 'main'
+            }
+        }
         stage('Code Build') {
             steps {
                 sh 'mvn clean install'
